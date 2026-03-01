@@ -1,0 +1,1 @@
+"""MacroTerminal core module."""
