@@ -15,16 +15,22 @@ logger = logging.getLogger(__name__)
 
 # Ticker maps
 GLOBAL_TICKERS = {
-    "spx": "^GSPC",
-    "vix": "^VIX",
-    "dxy": "DX-Y.NYB",
-    "gold": "GC=F",
+    "spx":       "^GSPC",
+    "vix":       "^VIX",
+    "dxy":       "DX-Y.NYB",
+    "gold":      "GC=F",
+    "oil_wti":   "CL=F",       # WTI Crude Oil
+    "copper":    "HG=F",       # Copper Futures (USD/lb)
+    "hyg":       "HYG",        # iShares HY Corporate Bond ETF (credit spread proxy)
+    "tips_10y":  "TIP",        # iShares TIPS Bond ETF (real yield proxy)
 }
 
 INDIA_TICKERS = {
-    "nifty": "^NSEI",
-    "india_vix": "^INDIAVIX",
-    "usdinr": "INR=X",
+    "nifty":       "^NSEI",
+    "india_vix":   "^INDIAVIX",
+    "usdinr":      "INR=X",
+    "nifty_bank":  "^NSEBANK",  # Nifty Bank Index
+    "brent":       "BZ=F",      # Brent Crude Oil
 }
 
 PERIOD_MAP = {
@@ -133,6 +139,45 @@ def compute_rolling_beta(
     return float(cov.loc["y", "x"] / cov.loc["x", "x"])
 
 
+def compute_copper_gold_ratio(copper_df: pd.DataFrame, gold_df: pd.DataFrame) -> pd.Series:
+    """
+    Compute Copper/Gold ratio.
+    Copper is in USD/lb, Gold in USD/oz — ratio is used directionally, not as absolute.
+    Rising ratio = growth optimism, falling = risk-off / recession fears.
+
+    Returns:
+        pd.Series with DatetimeIndex, or empty Series on error.
+    """
+    if copper_df.empty or gold_df.empty:
+        return pd.Series(dtype=float, name="copper_gold_ratio")
+    try:
+        copper_close = copper_df["Close"].dropna()
+        gold_close   = gold_df["Close"].dropna()
+        aligned = pd.concat([copper_close, gold_close], axis=1).dropna()
+        aligned.columns = ["copper", "gold"]
+        ratio = aligned["copper"] / aligned["gold"]
+        ratio.name = "copper_gold_ratio"
+        return ratio
+    except Exception as e:
+        logger.error(f"Copper/Gold ratio computation failed: {e}")
+        return pd.Series(dtype=float, name="copper_gold_ratio")
+
+
+def compute_hy_spread_proxy(hyg_df: pd.DataFrame) -> pd.Series:
+    """
+    HYG ETF price is inversely related to HY credit spreads.
+    We track HYG price directly — falling HYG = widening spreads = credit stress.
+
+    Returns:
+        pd.Series of HYG Close prices.
+    """
+    if hyg_df.empty or "Close" not in hyg_df.columns:
+        return pd.Series(dtype=float, name="hyg")
+    s = hyg_df["Close"].dropna()
+    s.name = "hyg"
+    return s
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_all_market_data() -> dict:
     """
@@ -150,6 +195,15 @@ def load_all_market_data() -> dict:
         result[name] = df
         if not df.empty and "Close" in df.columns:
             result[f"{name}_returns"] = compute_returns(df)
-            result[f"{name}_vol20d"] = compute_rolling_vol(result[f"{name}_returns"])
+            result[f"{name}_vol20d"]  = compute_rolling_vol(result[f"{name}_returns"])
+
+    # Derived: Copper/Gold ratio
+    copper_df = result.get("copper", pd.DataFrame())
+    gold_df   = result.get("gold",   pd.DataFrame())
+    result["copper_gold_ratio"] = compute_copper_gold_ratio(copper_df, gold_df)
+
+    # Derived: HYG price series (credit proxy)
+    hyg_df = result.get("hyg", pd.DataFrame())
+    result["hyg_price"] = compute_hy_spread_proxy(hyg_df)
 
     return result

@@ -19,24 +19,23 @@ FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # FRED series IDs used across the app
 FRED_SERIES = {
-    "cpi": "CPIAUCSL",
-    "core_cpi": "CPILFESL",
-    "fed_funds": "FEDFUNDS",
-    "t2y": "DGS2",
-    "t10y": "DGS10",
-    "breakeven_10y": "T10YIE",
-    "unemployment": "UNRATE",
+    "cpi":          "CPIAUCSL",    # US CPI All Items
+    "core_cpi":     "CPILFESL",    # US Core CPI (ex Food & Energy)
+    "fed_funds":    "FEDFUNDS",    # Fed Funds Effective Rate
+    "t2y":          "DGS2",        # 2Y Treasury Yield
+    "t10y":         "DGS10",       # 10Y Treasury Yield
+    "breakeven_10y":"T10YIE",      # 10Y Breakeven Inflation (TIPS-derived)
+    "real_yield_10y":"DFII10",     # 10Y Real Yield (TIPS)
+    "unemployment": "UNRATE",      # US Unemployment Rate
+    "india_gsec_10y":"INDIRLTLT01STM",  # India 10Y Government Bond Yield (monthly)
 }
 
 
 def _get_fred_api_key() -> Optional[str]:
     """Retrieve FRED API key from Streamlit secrets or environment variables."""
-    # Try environment variable first (works locally without secrets.toml)
     env_key = os.environ.get("FRED_API_KEY")
     if env_key:
         return env_key
-
-    # Try Streamlit secrets (works on Streamlit Cloud and with secrets.toml)
     try:
         key = st.secrets.get("FRED_API_KEY")
         return key if key else None
@@ -55,7 +54,7 @@ def fetch_fred_series(
 
     Args:
         series_id: FRED series identifier (e.g., 'CPIAUCSL').
-        start_date: ISO date string 'YYYY-MM-DD'; defaults to 6 years ago.
+        start_date: ISO date string 'YYYY-MM-DD'; defaults to 7 years ago.
         retries: Number of retry attempts on failure.
         backoff: Exponential backoff multiplier.
 
@@ -64,14 +63,14 @@ def fetch_fred_series(
     """
     api_key = _get_fred_api_key()
     if not api_key:
-        return pd.DataFrame()  # Warning shown once by load_all_fred_series()
+        return pd.DataFrame()
 
     if start_date is None:
         start_date = (datetime.today() - timedelta(days=365 * 7)).strftime("%Y-%m-%d")
 
     params = {
         "series_id": series_id,
-        "api_key": api_key,
+        "api_key":   api_key,
         "file_type": "json",
         "observation_start": start_date,
     }
@@ -86,7 +85,7 @@ def fetch_fred_series(
                 return pd.DataFrame()
 
             df = pd.DataFrame(observations)[["date", "value"]]
-            df["date"] = pd.to_datetime(df["date"])
+            df["date"]  = pd.to_datetime(df["date"])
             df["value"] = pd.to_numeric(df["value"], errors="coerce")
             df = df.dropna(subset=["value"]).set_index("date").sort_index()
             return df
@@ -106,10 +105,6 @@ def fetch_fred_series(
 def compute_yoy(df: pd.DataFrame, col: str = "value") -> pd.DataFrame:
     """
     Compute YoY % change for monthly series (shift by 12 periods).
-
-    Args:
-        df: DataFrame with DatetimeIndex and a numeric column.
-        col: Column name to transform.
 
     Returns:
         DataFrame with additional 'yoy' column.
@@ -144,12 +139,12 @@ def load_all_fred_series() -> dict:
     """
     result = {}
 
-    # Check key once — warn once
     if not _get_fred_api_key():
         st.warning(
             "⚠️ **FRED API key not set** — Global Macro data (CPI, yields, Fed Funds) is unavailable. "
-            "To enable it: create `D:\\MacroTerminal\\.streamlit\\secrets.toml` with `FRED_API_KEY = \"your_key\"` "
-            "or set the `FRED_API_KEY` environment variable. Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
+            "To enable it: create `.streamlit/secrets.toml` with `FRED_API_KEY = \"your_key\"` "
+            "or set the `FRED_API_KEY` environment variable. "
+            "Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
         )
         return result
 
@@ -165,8 +160,11 @@ def load_all_fred_series() -> dict:
 
     # Yield spread
     t10y = result.get("t10y", pd.DataFrame())
-    t2y = result.get("t2y", pd.DataFrame())
+    t2y  = result.get("t2y",  pd.DataFrame())
     if not t10y.empty and not t2y.empty:
         result["yield_spread"] = compute_spread(t10y, t2y)
+
+    # Real yield is fetched directly as DFII10 — no extra computation needed
+    # India G-Sec yield is fetched directly as INDIRLTLT01STM
 
     return result

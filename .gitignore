@@ -32,3 +32,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+
+tp/
+saved_models/
+nifty bull bear/
+data_cache/
